@@ -256,6 +256,11 @@ impl Twingate {
         self.error.is_empty() && !self.status.as_object().is_none_or(|o| o.is_empty())
     }
 
+    /// Interfejs klienta Twingate na Linuksie.
+    pub fn interfaces(&self) -> Vec<String> {
+        vec!["sdwan0".into()]
+    }
+
     fn data(&self) -> &Value {
         static NULL: Value = Value::Null;
         self.data.as_ref().unwrap_or(&NULL)
@@ -346,7 +351,7 @@ impl Twingate {
             return text(&self.busy);
         }
         match self.state().as_str() {
-            "Online" => check("Connected", true, true, |t: &mut Tray, _| t.tg().disconnect()),
+            "Online" => check("Connected", true, true, |t: &mut Tray, _| t.disconnect_all()),
             "Not running" => {
                 let current = self.current_account.clone();
                 check("Disconnected - click to connect", false, true, move |t: &mut Tray, _| {
@@ -498,11 +503,6 @@ impl Twingate {
     }
 
     // ---------- akcje ----------
-
-    fn disconnect(&mut self) {
-        let work = || run(&["systemctl", "stop", SERVICE], 120);
-        self.in_background("Disconnecting…", work, |out| report(&out, "Could not stop Twingate"));
-    }
 
     fn reconnect(&mut self) {
         let work = || {

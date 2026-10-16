@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
-# vpn-tray: operacje roota na tunelach wg-quick, wołane przez pkexec (reguła polkit 49-vpn-tray.rules
-# przepuszcza grupę wheel bez hasła). Konfiguracja z kluczem prywatnym: /etc/wireguard/<nazwa>.conf
+# vpn-tray: operacje roota wołane przez pkexec (reguła polkit 49-vpn-tray.rules przepuszcza grupę
+# wheel bez hasła): tunele wg-quick i odmontowanie udziałów NFS przed rozłączeniem VPN-a. Konfiguracja z kluczem prywatnym: /etc/wireguard/<nazwa>.conf
 # (root, 0600); kopia bez kluczy dla traya: /etc/vpn-tray/wireguard/<nazwa>.conf (0644).
 #
-#   wg-helper import <nazwa> <plik>     plik czytany z uprawnieniami wywołującego (nie roota)
-#   wg-helper remove <nazwa>            tylko tunele dodane przez vpn-tray
-#   wg-helper autostart <nazwa> on|off  systemctl enable/disable wg-quick@<nazwa>
+#   vpn-helper import <nazwa> <plik>     plik czytany z uprawnieniami wywołującego (nie roota)
+#   vpn-helper remove <nazwa>            tylko tunele dodane przez vpn-tray
+#   vpn-helper autostart <nazwa> on|off  systemctl enable/disable wg-quick@<nazwa>
+#   vpn-helper unmount-nfs <punkt>       tylko zamontowane udziały NFS (umount, a gdy zajęty - umount -l)
 set -euo pipefail
 PUB=/etc/vpn-tray/wireguard
 die() { echo "$*" >&2; exit 2; }
 
 [[ $EUID -eq 0 ]] || die "run through pkexec"
 cmd=${1:-}
+
+if [[ $cmd == unmount-nfs ]]; then
+    target=${2:-}
+    # Punkt montowania z /proc/mounts (ścieżki ze spacjami są tam zapisane jako \040) i typ nfs*.
+    fstype=$(findmnt -rn -M "$target" -o FSTYPE 2>/dev/null | tail -1) || true
+    [[ $fstype == nfs* ]] || die "$target is not a mounted NFS share"
+    umount "$target" 2>/dev/null || umount -l "$target"
+    exit 0
+fi
+
 name=${2:-}
 [[ $name =~ ^[A-Za-z0-9_-]{1,15}$ ]] || die "invalid name: use 1-15 letters, digits, '-' or '_'"
 conf=/etc/wireguard/$name.conf
@@ -57,5 +68,5 @@ autostart)
         *) die "autostart: on or off" ;;
     esac
     ;;
-*) die "usage: wg-helper import|remove|autostart <name> …" ;;
+*) die "usage: vpn-helper import|remove|autostart <name> … | unmount-nfs <mountpoint>" ;;
 esac

@@ -10,6 +10,7 @@
 //! `--dump` = jedno odpytanie i menu jako tekst.
 
 mod common;
+mod nfs;
 mod providers;
 
 use std::sync::OnceLock;
@@ -46,6 +47,8 @@ pub fn refresh_all() {
 /// Przełączenie gotowe do wykonania (w tle albo z `--switch`).
 struct Switch {
     label: String,
+    /// Interfejsy VPN-ów, które znikną (albo zmienią trasy) - udziały NFS za nimi są odmontowywane.
+    ifaces: Vec<String>,
     confirm: Option<Confirm>,
     downs: Vec<(Kind, Job)>,
     up: Option<Job>,
@@ -60,6 +63,12 @@ impl Switch {
             }
         }
         let mut errors = Vec::new();
+        let mounts = nfs::behind(&self.ifaces);
+        if !mounts.is_empty() {
+            errors.extend(nfs::unmount(&mounts));
+            let list = mounts.iter().map(|m| format!("{} ({})", m.target, m.server)).collect::<Vec<_>>().join("\n");
+            APP.notify("Unmounted NFS shares behind the VPN", &list);
+        }
         for (k, job) in self.downs {
             if let Err(e) = job() {
                 errors.push(format!("Could not disconnect {}:\n{e}", k.name()));
@@ -114,6 +123,16 @@ impl Tray {
             Kind::NetBird => self.nb.as_ref().is_some_and(NetBird::active),
             Kind::WireGuard => self.wg.as_ref().is_some_and(WireGuard::active),
         }
+    }
+
+    /// Interfejsy sieciowe włączonych VPN-ów.
+    fn active_interfaces(&self) -> Vec<String> {
+        let mut all = Vec::new();
+        all.extend(self.ts.iter().filter(|p| p.active()).flat_map(Tailscale::interfaces));
+        all.extend(self.tg.iter().filter(|p| p.active()).flat_map(Twingate::interfaces));
+        all.extend(self.nb.iter().filter(|p| p.active()).flat_map(NetBird::interfaces));
+        all.extend(self.wg.iter().filter(|p| p.active()).flat_map(WireGuard::interfaces));
+        all
     }
 
     fn summary(&self, kind: Kind) -> Option<Summary> {
@@ -180,14 +199,16 @@ impl Tray {
             .filter(|k| *k != kind && self.active(*k))
             .filter_map(|k| self.disconnect_job(k).map(|j| (k, j)))
             .collect();
-        Some(Switch { label, confirm: self.confirm(kind, id), downs, up: Some(up) })
+        // Wszystkie aktywne VPN-y: także ten sam dostawca z innym profilem/kontem zmienia trasy.
+        let ifaces = self.active_interfaces();
+        Some(Switch { label, ifaces, confirm: self.confirm(kind, id), downs, up: Some(up) })
     }
 
     /// Plan "None": rozłączenie wszystkiego, co działa.
     fn plan_off(&self) -> Switch {
         let downs =
             self.kinds().into_iter().filter(|k| self.active(*k)).filter_map(|k| self.disconnect_job(k).map(|j| (k, j))).collect();
-        Switch { label: "None".into(), confirm: None, downs, up: None }
+        Switch { label: "None".into(), ifaces: self.active_interfaces(), confirm: None, downs, up: None }
     }
 
     fn run_in_background(&mut self, plan: Switch, busy: String) {
@@ -208,6 +229,9 @@ impl Tray {
     pub fn switch_to(&mut self, kind: Kind, id: String) {
         if !self.busy.is_empty() {
             return;
+        }
+        if self.choices().iter().any(|c| c.kind == kind && c.id == id && c.active) {
+            return; // już połączone
         }
         if let Some(plan) = self.plan(kind, &id) {
             let busy = format!("Switching to {}…", plan.label);

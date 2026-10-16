@@ -22,8 +22,9 @@ pacman -S --needed --asdeps --noconfirm kdialog wl-clipboard libnotify xdg-utils
 BIN=$("$SRC/build.sh" "$SRC")
 
 install -Dm755 "$BIN" "$LIB/vpn-tray"
-# Pomocnik roota dla tuneli wg-quick (pkexec); właściciel root, żeby nikt go nie podmienił.
-install -Dm755 -o root -g root "$SRC/wg-helper" "$LIB/wg-helper"
+# Pomocnik roota (pkexec): tunele wg-quick i odmontowanie NFS; właściciel root, żeby nikt go nie podmienił.
+install -Dm755 -o root -g root "$SRC/vpn-helper" "$LIB/vpn-helper"
+rm -f "$LIB/wg-helper"  # dawna nazwa
 rm -rf "$LIB/icons"
 install -Dm644 -t "$LIB/icons" "$SRC"/icons/*.svg
 install -Dm644 -t /etc/xdg/autostart "$SRC/vpn-tray.desktop"

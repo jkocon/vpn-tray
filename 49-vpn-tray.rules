@@ -1,7 +1,7 @@
 // VPN Tray: dla użytkowników z grupy wheel w aktywnej, lokalnej sesji bez hasła -
 //  - start/stop/restart usług VPN: twingate.service, netbird(@<iface>).service, wg-quick@<nazwa>.service
 //    (odpowiednik operatora Tailscale; enable/disable nadal pyta o hasło),
-//  - pomocnik /usr/local/lib/vpn-tray/wg-helper (import/usuwanie/autostart tuneli wg-quick).
+//  - pomocnik /usr/local/lib/vpn-tray/vpn-helper (tunele wg-quick, odmontowanie NFS przed rozłączeniem).
 // Tailscale (LocalAPI + operator) i WireGuard w NetworkManagerze tej reguły nie potrzebują.
 polkit.addRule(function(action, subject) {
     if (!(subject.local && subject.active && subject.isInGroup("wheel"))) {
@@ -14,7 +14,7 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
     if (action.id == "org.freedesktop.policykit.exec" &&
-        action.lookup("program") == "/usr/local/lib/vpn-tray/wg-helper") {
+        action.lookup("program") == "/usr/local/lib/vpn-tray/vpn-helper") {
         return polkit.Result.YES;
     }
     return polkit.Result.NOT_HANDLED;

@@ -23,8 +23,12 @@ VPN-a, którego nie ma w systemie, nie ma w menu.
 - **WireGuard bez bałaganu w Sieciach:** *Import a .conf file…* tworzy tunel **wg-quick**
   (`/etc/wireguard/<nazwa>.conf`, tylko root; usługa `wg-quick@<nazwa>`) zamiast połączenia
   NetworkManagera, więc nie widać go w aplecie Sieci, gdy jest wyłączony. Część roota robi
-  `wg-helper` przez pkexec (bez hasła dla `wheel`), czytając plik z Twoimi uprawnieniami
+  `vpn-helper` przez pkexec (bez hasła dla `wheel`), czytając plik z Twoimi uprawnieniami
   i odrzucając `PreUp`/`PostUp`. Połączenia WireGuard z NetworkManagera nadal działają (*[NM]*).
+- **Udziały NFS za VPN-em:** przed przełączeniem albo wyłączeniem VPN-a tray odmontowuje udziały
+  NFS, do których serwera ruch idzie przez ten VPN (`ip route get`), póki serwer odpowiada. Inaczej
+  wszystko, co dotknie martwego montowania (np. `kded6`, a z nim cały zasobnik Plasmy), wisi
+  w jądrze. Z `x-systemd.automount` udział wraca przy następnym otwarciu.
 - **Ikona:** ikona aktywnego VPN-a z jego stanami; szara tarcza, gdy wszystko wyłączone.
 - **Podmenu** każdego VPN-a: wszystko, co miały osobne traye (urządzenia, sieci, exit node,
   konta/profile, ustawienia, import .conf…).

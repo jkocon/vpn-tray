@@ -5,7 +5,7 @@
 //! Dwa rodzaje tuneli: połączenia NetworkManagera i tunele wg-quick (/etc/wireguard, usługa
 //! wg-quick@<nazwa>). Tunelu wg-quick nie widać w aplecie Sieci Plasmy, dopóki jest wyłączony, więc
 //! import z traya tworzy właśnie taki. Konfiguracja z kluczem jest tylko dla roota - tray czyta kopię
-//! bez kluczy z /etc/vpn-tray/wireguard, a import/usuwanie/autostart robi `wg-helper` przez pkexec.
+//! bez kluczy z /etc/vpn-tray/wireguard, a import/usuwanie/autostart robi `vpn-helper` przez pkexec.
 //!
 //! Połączenia NetworkManagera idą przez `nmcli`: up/down to network-control (aktywna sesja - bez hasła), a import,
 //! zmiany i usuwanie to settings.modify.system (grupa wheel - bez hasła dzięki regule z pakietu
@@ -41,9 +41,9 @@ const STALE_SECS: u64 = 190;
 const NO_REPLY_SECS: u64 = 15;
 
 static POLLER: OnceLock<Poller> = OnceLock::new();
-/// Kopie konfiguracji wg-quick bez kluczy (zapisuje je wg-helper).
+/// Kopie konfiguracji wg-quick bez kluczy (zapisuje je vpn-helper).
 const QUICK_DIR: &str = "/etc/vpn-tray/wireguard";
-const HELPER: &str = "/usr/local/lib/vpn-tray/wg-helper";
+const HELPER: &str = crate::nfs::HELPER;
 
 pub fn refresh_now() {
     if let Some(p) = POLLER.get() {
@@ -149,6 +149,10 @@ impl WireGuard {
 
     pub fn active(&self) -> bool {
         self.conns.iter().any(|c| c.active() || c.busy())
+    }
+
+    pub fn interfaces(&self) -> Vec<String> {
+        self.conns.iter().filter(|c| c.active() || c.busy()).map(|c| c.device.clone()).filter(|d| !d.is_empty()).collect()
     }
 
     fn details(&self, c: &Conn) -> Details {
@@ -428,7 +432,7 @@ fn open_settings() {
     }
 }
 
-/// Import pliku .conf jako tunel wg-quick: /etc/wireguard/<nazwa>.conf przez wg-helper (pkexec).
+/// Import pliku .conf jako tunel wg-quick: /etc/wireguard/<nazwa>.conf przez vpn-helper (pkexec).
 /// Bez autostartu - tunel włącza się tylko z menu.
 fn import() {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
@@ -460,7 +464,7 @@ fn import() {
     if existing.iter().any(|c| c.name == name || c.device == name) || Path::new("/sys/class/net").join(&name).exists() {
         return APP.error(&format!("A connection or interface named {name} already exists - pick another name or remove it first."));
     }
-    // Tunel wg-quick (niewidoczny w aplecie Sieci, gdy wyłączony); plik czyta wg-helper jako Ty.
+    // Tunel wg-quick (niewidoczny w aplecie Sieci, gdy wyłączony); plik czyta vpn-helper jako Ty.
     let out = helper(&["import", &name, &path]);
     if !out.ok_or_cancelled() {
         return report(&out, &format!("Could not import {path}"));

@@ -169,6 +169,12 @@ impl NetBird {
         matches!(self.state(), "Connected" | "Connecting") || self.login_running
     }
 
+    /// Interfejs WireGuard demona: instancja netbird@<iface>, domyślnie wt0.
+    pub fn interfaces(&self) -> Vec<String> {
+        let iface = self.unit.strip_prefix("netbird@").and_then(|r| r.strip_suffix(".service")).unwrap_or("wt0");
+        vec![iface.into()]
+    }
+
     fn exit_node(&self) -> Option<&Net> {
         self.networks.iter().find(|n| n.is_exit() && n.selected)
     }
@@ -271,7 +277,7 @@ impl NetBird {
         } else if !self.error.is_empty() {
             text(&format!("NetBird: {}", self.error.chars().take(80).collect::<String>()))
         } else if state == "Connected" {
-            check("Connected", true, true, |t: &mut Tray, _| t.nb().disconnect())
+            check("Connected", true, true, |t: &mut Tray, _| t.disconnect_all())
         } else if self.needs_login() {
             let what = if state == "SessionExpired" { "Session expired" } else { "Logged out" };
             button(&format!("{what} - click to log in…"), true, connect)
@@ -300,7 +306,14 @@ impl NetBird {
         if !names.is_empty() {
             let selected = names.iter().position(|n| *n == self.profile).unwrap_or(usize::MAX);
             let options = names.iter().map(|n| (n.clone(), idle)).collect();
-            sub.push(radio(options, selected, move |t: &mut Tray, i| t.nb().switch_profile(names[i].clone())));
+            // Przy połączeniu = przełączenie sieci (wspólna ścieżka: odmontowanie NFS, rozłączenie, połączenie).
+            sub.push(radio(options, selected, move |t: &mut Tray, i| {
+                if t.nb().active() {
+                    t.switch_to(Kind::NetBird, names[i].clone());
+                } else {
+                    t.nb().switch_profile(names[i].clone());
+                }
+            }));
             sub.push(sep());
         }
         let expires = s(self.st(), "sessionExpiresAt");
@@ -463,10 +476,6 @@ impl NetBird {
             move || netbird(&args.iter().map(String::as_str).collect::<Vec<_>>(), timeout),
             move |out| report(&out, &what),
         );
-    }
-
-    fn disconnect(&mut self) {
-        self.netbird_bg("Disconnecting…", "Could not disconnect", &["down"], 60);
     }
 
     fn set_network(&mut self, id: String, selected: bool) {

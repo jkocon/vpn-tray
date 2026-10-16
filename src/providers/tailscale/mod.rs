@@ -173,6 +173,10 @@ impl Tailscale {
         matches!(self.backend(), "Running" | "Starting" | "NeedsMachineAuth")
     }
 
+    pub fn interfaces(&self) -> Vec<String> {
+        vec!["tailscale0".into()]
+    }
+
     fn me(&self) -> Option<&Value> {
         self.status.as_ref().map(|st| get(st, "Self")).filter(|me| me.is_object())
     }
@@ -272,7 +276,7 @@ impl Tailscale {
         let current = self.current_profile.clone();
         let connect = move |t: &mut Tray| t.switch_to(Kind::Tailscale, current.clone());
         match self.backend() {
-            "Running" => check("Connected", true, true, |_, _| bg(|| apply(vec![("WantRunning", json!(false))]))),
+            "Running" => check("Connected", true, true, |t: &mut Tray, _| t.disconnect_all()),
             "NeedsLogin" => button("Logged out - click to log in…", !self.login_running, connect),
             "Starting" => text("Connecting…"),
             "NeedsMachineAuth" => button("Waiting for admin approval…", true, |_| open_url(ADMIN_URL)),

@@ -46,9 +46,13 @@ About / Exit
 - **WireGuard without clutter:** *Import a .conf file…* creates a **wg-quick** tunnel
   (`/etc/wireguard/<name>.conf`, root-only; service `wg-quick@<name>`), not a NetworkManager
   connection – so it does not show up in the desktop's network applet while it is off. The
-  bundled `wg-helper` does the root part via pkexec (no password for `wheel`); it reads the file
+  bundled `vpn-helper` does the root part via pkexec (no password for `wheel`); it reads the file
   with your permissions and refuses `PreUp`/`PostUp`-style commands. Existing NetworkManager
   WireGuard connections keep working and are marked *[NM]*.
+- **NFS shares behind a VPN:** before switching or turning a VPN off, the tray unmounts NFS
+  shares whose server is reached through that VPN (`ip route get`), while the server still answers.
+  Otherwise anything touching the dead mount – e.g. KDE's `kded6`, and with it the whole system
+  tray – hangs in the kernel. With `x-systemd.automount` the share comes back on next access.
 - **Icon:** the icon of the active VPN with its usual states (connected, exit node, sign-in
   needed, server not answering); a grey shield when everything is off.
 
