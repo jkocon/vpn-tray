@@ -43,6 +43,12 @@ About / Exit
   *Keep only …*.
 - **WireGuard on its own LAN:** if this computer already has an address inside a WireGuard
   tunnel's subnets (you are on that network), the tray asks before connecting.
+- **WireGuard without clutter:** *Import a .conf file…* creates a **wg-quick** tunnel
+  (`/etc/wireguard/<name>.conf`, root-only; service `wg-quick@<name>`), not a NetworkManager
+  connection – so it does not show up in the desktop's network applet while it is off. The
+  bundled `wg-helper` does the root part via pkexec (no password for `wheel`); it reads the file
+  with your permissions and refuses `PreUp`/`PostUp`-style commands. Existing NetworkManager
+  WireGuard connections keep working and are marked *[NM]*.
 - **Icon:** the icon of the active VPN with its usual states (connected, exit node, sign-in
   needed, server not answering); a grey shield when everything is off.
 
@@ -66,7 +72,7 @@ the available ones.
 
 - Linux desktop with a **StatusNotifierItem** tray (KDE Plasma; GNOME with the AppIndicator extension).
 - Any of: **Tailscale** (`tailscaled`), **Twingate** (`twingate.service`), **NetBird**
-  (`netbird.service` or `netbird@<iface>.service`), **NetworkManager** 1.16+ for WireGuard.
+  (`netbird.service` or `netbird@<iface>.service`), **wireguard-tools** (wg-quick) and/or **NetworkManager** 1.16+ for WireGuard.
 - polkit and the `wheel` group: the bundled rule lets you start/stop Twingate and NetBird without a
   password; Tailscale needs you as operator (`install.sh` sets it); NetworkManager's own wheel rule
   covers WireGuard import/changes.

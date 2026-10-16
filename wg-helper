@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# vpn-tray: operacje roota na tunelach wg-quick, wołane przez pkexec (reguła polkit 49-vpn-tray.rules
+# przepuszcza grupę wheel bez hasła). Konfiguracja z kluczem prywatnym: /etc/wireguard/<nazwa>.conf
+# (root, 0600); kopia bez kluczy dla traya: /etc/vpn-tray/wireguard/<nazwa>.conf (0644).
+#
+#   wg-helper import <nazwa> <plik>     plik czytany z uprawnieniami wywołującego (nie roota)
+#   wg-helper remove <nazwa>            tylko tunele dodane przez vpn-tray
+#   wg-helper autostart <nazwa> on|off  systemctl enable/disable wg-quick@<nazwa>
+set -euo pipefail
+PUB=/etc/vpn-tray/wireguard
+die() { echo "$*" >&2; exit 2; }
+
+[[ $EUID -eq 0 ]] || die "run through pkexec"
+cmd=${1:-}
+name=${2:-}
+[[ $name =~ ^[A-Za-z0-9_-]{1,15}$ ]] || die "invalid name: use 1-15 letters, digits, '-' or '_'"
+conf=/etc/wireguard/$name.conf
+
+case $cmd in
+import)
+    src=${3:-}
+    [[ -n $src ]] || die "missing file"
+    [[ -n ${PKEXEC_UID:-} ]] || die "run through pkexec"
+    [[ -e $conf ]] && die "/etc/wireguard/$name.conf already exists"
+    # Czytamy jako użytkownik, który wywołał pkexec - root nie może posłużyć do odczytu cudzych plików.
+    content=$(setpriv --reuid="$PKEXEC_UID" --regid="$(id -g "$PKEXEC_UID")" --init-groups -- cat -- "$src") ||
+        die "cannot read $src"
+    # Tylko składnia wg-quick (bez PostUp/PreDown itp. - to byłyby polecenia uruchamiane jako root).
+    while IFS= read -r line; do
+        l=${line%%#*}; l=${l//[[:space:]]/}
+        [[ -z $l || $l == "[Interface]" || $l == "[Peer]" ]] && continue
+        key=${l%%=*}
+        case ${key,,} in
+            privatekey|address|dns|mtu|listenport|table|fwmark|saveconfig) ;;
+            publickey|presharedkey|allowedips|endpoint|persistentkeepalive) ;;
+            *) die "unsupported line in $src: $key (PreUp/PostUp/… are not allowed)" ;;
+        esac
+    done <<< "$content"
+    grep -q '^\[Interface\]' <<< "$content" && grep -q '^\[Peer\]' <<< "$content" &&
+        grep -qi '^ *PrivateKey *=' <<< "$content" || die "$src is not a WireGuard configuration"
+    install -d -m 700 /etc/wireguard
+    install -d -m 755 "$PUB"
+    (umask 077; printf '%s\n' "$content" > "$conf")
+    grep -viE '^[[:space:]]*(PrivateKey|PresharedKey)[[:space:]]*=' "$conf" > "$PUB/$name.conf"
+    chmod 644 "$PUB/$name.conf"
+    ;;
+remove)
+    [[ -e $PUB/$name.conf ]] || die "$name was not added by vpn-tray"
+    systemctl disable --now "wg-quick@$name.service" 2>/dev/null || true
+    rm -f "$conf" "$PUB/$name.conf"
+    ;;
+autostart)
+    [[ -e $PUB/$name.conf ]] || die "$name was not added by vpn-tray"
+    case ${3:-} in
+        on) systemctl enable "wg-quick@$name.service" ;;
+        off) systemctl disable "wg-quick@$name.service" ;;
+        *) die "autostart: on or off" ;;
+    esac
+    ;;
+*) die "usage: wg-helper import|remove|autostart <name> …" ;;
+esac

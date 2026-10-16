@@ -16,11 +16,14 @@ if ! command -v tailscale >/dev/null && ! command -v twingate >/dev/null &&
     exit 10
 fi
 
-pacman -S --needed --asdeps --noconfirm kdialog wl-clipboard libnotify xdg-utils
+# wireguard-tools: tunele wg-quick (import z traya tworzy je zamiast połączeń NetworkManagera).
+pacman -S --needed --asdeps --noconfirm kdialog wl-clipboard libnotify xdg-utils wireguard-tools
 
 BIN=$("$SRC/build.sh" "$SRC")
 
 install -Dm755 "$BIN" "$LIB/vpn-tray"
+# Pomocnik roota dla tuneli wg-quick (pkexec); właściciel root, żeby nikt go nie podmienił.
+install -Dm755 -o root -g root "$SRC/wg-helper" "$LIB/wg-helper"
 rm -rf "$LIB/icons"
 install -Dm644 -t "$LIB/icons" "$SRC"/icons/*.svg
 install -Dm644 -t /etc/xdg/autostart "$SRC/vpn-tray.desktop"

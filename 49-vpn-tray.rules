@@ -1,13 +1,21 @@
-// VPN Tray: start/stop/restart usług VPN (twingate.service, netbird.service, netbird@<iface>.service)
-// bez hasła dla użytkowników z grupy wheel w aktywnej, lokalnej sesji - odpowiednik operatora Tailscale.
-// Włączanie autostartu (enable/disable) nadal pyta o hasło. Tailscale (LocalAPI + operator)
-// i WireGuard (NetworkManager) tej reguły nie potrzebują.
+// VPN Tray: dla użytkowników z grupy wheel w aktywnej, lokalnej sesji bez hasła -
+//  - start/stop/restart usług VPN: twingate.service, netbird(@<iface>).service, wg-quick@<nazwa>.service
+//    (odpowiednik operatora Tailscale; enable/disable nadal pyta o hasło),
+//  - pomocnik /usr/local/lib/vpn-tray/wg-helper (import/usuwanie/autostart tuneli wg-quick).
+// Tailscale (LocalAPI + operator) i WireGuard w NetworkManagerze tej reguły nie potrzebują.
 polkit.addRule(function(action, subject) {
+    if (!(subject.local && subject.active && subject.isInGroup("wheel"))) {
+        return polkit.Result.NOT_HANDLED;
+    }
     var unit = action.lookup("unit") || "";
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
-        /^(twingate|netbird(@[A-Za-z0-9_-]+)?)\.service$/.test(unit) &&
-        ["start", "stop", "restart"].indexOf(action.lookup("verb")) >= 0 &&
-        subject.local && subject.active && subject.isInGroup("wheel")) {
+        /^(twingate|netbird(@[A-Za-z0-9_-]+)?|wg-quick@[A-Za-z0-9_-]+)\.service$/.test(unit) &&
+        ["start", "stop", "restart"].indexOf(action.lookup("verb")) >= 0) {
         return polkit.Result.YES;
     }
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        action.lookup("program") == "/usr/local/lib/vpn-tray/wg-helper") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
 });

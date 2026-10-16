@@ -20,6 +20,11 @@ VPN-a, którego nie ma w systemie, nie ma w menu.
 - **Więcej niż jeden VPN włączony** (np. dwa demony z autostartu): ostrzeżenie i *Keep only …*.
 - **WireGuard w sieci, w której jesteś:** jeśli komputer ma już adres w podsieciach tunelu,
   tray pyta przed połączeniem.
+- **WireGuard bez bałaganu w Sieciach:** *Import a .conf file…* tworzy tunel **wg-quick**
+  (`/etc/wireguard/<nazwa>.conf`, tylko root; usługa `wg-quick@<nazwa>`) zamiast połączenia
+  NetworkManagera, więc nie widać go w aplecie Sieci, gdy jest wyłączony. Część roota robi
+  `wg-helper` przez pkexec (bez hasła dla `wheel`), czytając plik z Twoimi uprawnieniami
+  i odrzucając `PreUp`/`PostUp`. Połączenia WireGuard z NetworkManagera nadal działają (*[NM]*).
 - **Ikona:** ikona aktywnego VPN-a z jego stanami; szara tarcza, gdy wszystko wyłączone.
 - **Podmenu** każdego VPN-a: wszystko, co miały osobne traye (urządzenia, sieci, exit node,
   konta/profile, ustawienia, import .conf…).

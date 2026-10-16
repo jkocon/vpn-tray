@@ -12,6 +12,9 @@ pub struct Conn {
     pub device: String,
     /// "activated", "activating", "deactivating" albo "" (nieaktywne).
     pub state: String,
+    /// Tunel wg-quick (/etc/wireguard, usługa wg-quick@<nazwa>) zamiast połączenia NetworkManagera -
+    /// nie widać go w aplecie Sieci, dopóki jest wyłączony. `uuid` = "wg-quick:<nazwa>".
+    pub quick: bool,
 }
 
 impl Conn {
@@ -91,6 +94,7 @@ pub fn parse_connections(out: &str) -> Vec<Conn> {
                 autoconnect: f[3] == "yes",
                 device: f[4].clone(),
                 state: f[5].clone(),
+                quick: false,
             })
         })
         .collect()
@@ -132,6 +136,55 @@ pub fn parse_details(out: &str) -> Details {
             "wireguard.peers" => d.peers = parse_peers(&value),
             "ipv4.addresses" => d.addresses = list(&value),
             "ipv4.dns" => d.dns = list(&value),
+            _ => {}
+        }
+    }
+    d
+}
+
+/// Tunel wg-quick ze stanem usługi z `systemctl is-active` / `is-enabled`.
+pub fn quick_conn(name: &str, active: &str, enabled: &str) -> Conn {
+    let state = match active {
+        "active" => "activated",
+        "activating" | "reloading" => "activating",
+        "deactivating" => "deactivating",
+        _ => "",
+    };
+    Conn {
+        name: name.into(),
+        uuid: format!("wg-quick:{name}"),
+        autoconnect: enabled == "enabled",
+        device: if state.is_empty() { String::new() } else { name.into() },
+        state: state.into(),
+        quick: true,
+    }
+}
+
+/// Plik wg-quick (kopia bez kluczy z /etc/vpn-tray/wireguard): Address, DNS i peery.
+pub fn parse_quick(text: &str) -> Details {
+    let mut d = Details::default();
+    let list = |v: &str| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect::<Vec<_>>();
+    let mut in_peer = false;
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.eq_ignore_ascii_case("[peer]") {
+            in_peer = true;
+            d.peers.push(Peer::default());
+            continue;
+        }
+        if line.eq_ignore_ascii_case("[interface]") {
+            in_peer = false;
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let (key, value) = (key.trim().to_lowercase(), value.trim());
+        match (in_peer, key.as_str(), d.peers.last_mut()) {
+            (false, "address", _) => d.addresses.extend(list(value)),
+            (false, "dns", _) => d.dns.extend(list(value)),
+            (true, "publickey", Some(p)) => p.public_key = value.into(),
+            (true, "endpoint", Some(p)) => p.endpoint = value.into(),
+            (true, "allowedips", Some(p)) => p.allowed_ips.extend(list(value)),
+            (true, "persistentkeepalive", Some(p)) => p.keepalive = value.parse().unwrap_or(0),
             _ => {}
         }
     }
@@ -235,6 +288,22 @@ mod tests {
         assert_eq!(d.routes(), ["10.11.0.0/24", "10.0.0.1/32"]);
         assert_eq!(d.peers[0].keepalive, 25);
         assert!(!d.full_tunnel());
+    }
+
+    #[test]
+    fn wg_quick_file() {
+        let d = parse_quick(
+            "[Interface]\nAddress = 10.0.0.2/32\nDNS = 10.11.0.1, 1.1.1.1\n\n[Peer]\n# hotel\nPublicKey = +6CL=\n\
+             AllowedIPs = 10.11.0.0/24,10.11.30.0/23, 10.0.0.1/32\nEndpoint = kurant.example.com:51820\nPersistentKeepalive = 25\n",
+        );
+        assert_eq!(d.addresses, ["10.0.0.2/32"]);
+        assert_eq!(d.dns, ["10.11.0.1", "1.1.1.1"]);
+        assert_eq!(d.routes(), ["10.11.0.0/24", "10.11.30.0/23", "10.0.0.1/32"]);
+        assert_eq!(d.endpoint(), "kurant.example.com:51820");
+        assert_eq!(d.peers[0].keepalive, 25);
+        let c = quick_conn("kurant", "active", "disabled");
+        assert!(c.active() && c.quick && !c.autoconnect && c.device == "kurant");
+        assert!(!quick_conn("kurant", "inactive", "enabled").active());
     }
 
     #[test]

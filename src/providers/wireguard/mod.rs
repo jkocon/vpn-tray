@@ -2,7 +2,12 @@
 //! osobna pozycja na liście wyboru VPN. Podmenu: szczegóły aktywnego tunelu, zarządzanie
 //! połączeniami (autoconnect, zmiana nazwy, usuwanie) i import plików .conf (wg-quick).
 //!
-//! Wszystko idzie przez `nmcli`: up/down to network-control (aktywna sesja - bez hasła), a import,
+//! Dwa rodzaje tuneli: połączenia NetworkManagera i tunele wg-quick (/etc/wireguard, usługa
+//! wg-quick@<nazwa>). Tunelu wg-quick nie widać w aplecie Sieci Plasmy, dopóki jest wyłączony, więc
+//! import z traya tworzy właśnie taki. Konfiguracja z kluczem jest tylko dla roota - tray czyta kopię
+//! bez kluczy z /etc/vpn-tray/wireguard, a import/usuwanie/autostart robi `wg-helper` przez pkexec.
+//!
+//! Połączenia NetworkManagera idą przez `nmcli`: up/down to network-control (aktywna sesja - bez hasła), a import,
 //! zmiany i usuwanie to settings.modify.system (grupa wheel - bez hasła dzięki regule z pakietu
 //! NetworkManager, inaczej pyta agent polkit). NetworkManager nie podaje czasu ostatniego handshake'u
 //! (`wg show` wymaga roota), więc "żyje" = przychodzą bajty na interfejsie (/sys/class/net).
@@ -12,7 +17,6 @@ mod parse;
 use std::collections::HashMap;
 use std::fs;
 use std::net::Ipv4Addr;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -21,11 +25,13 @@ use serde_json::Value;
 use crate::common::cmd::which;
 use crate::common::json::{arr, s};
 use crate::common::menu::{button, check, sep, submenu, text, Menu};
-use crate::common::{bg, icon_path, run, runtime_dir, Out, Poller};
+use crate::common::{bg, icon_path, run, Out, Poller};
 use crate::providers::{Choice, Confirm, Job, Kind, Level, Summary};
 use crate::{update, Tray, APP};
 
-use parse::{ago, human_bytes, iface_name, overlap, parse_connections, parse_details, valid_iface, Conn, Details};
+use parse::{
+    ago, human_bytes, iface_name, overlap, parse_connections, parse_details, parse_quick, quick_conn, valid_iface, Conn, Details,
+};
 
 const POLL: Duration = Duration::from_secs(3);
 /// Bez odpowiedzi serwera dłużej niż to = ostrzeżenie. Przy persistent-keepalive klient co 2 min
@@ -35,6 +41,9 @@ const STALE_SECS: u64 = 190;
 const NO_REPLY_SECS: u64 = 15;
 
 static POLLER: OnceLock<Poller> = OnceLock::new();
+/// Kopie konfiguracji wg-quick bez kluczy (zapisuje je wg-helper).
+const QUICK_DIR: &str = "/etc/vpn-tray/wireguard";
+const HELPER: &str = "/usr/local/lib/vpn-tray/wg-helper";
 
 pub fn refresh_now() {
     if let Some(p) = POLLER.get() {
@@ -46,6 +55,24 @@ fn nmcli(args: &[&str], timeout: u64) -> Out {
     let mut cmd = vec!["nmcli"];
     cmd.extend_from_slice(args);
     run(&cmd, timeout)
+}
+
+fn systemctl(verb: &str, name: &str) -> Out {
+    run(&["systemctl", verb, &format!("wg-quick@{name}.service")], 60)
+}
+
+fn helper(args: &[&str]) -> Out {
+    let mut cmd = vec!["pkexec", HELPER];
+    cmd.extend_from_slice(args);
+    run(&cmd, 120)
+}
+
+fn up(c: &Conn) -> Out {
+    if c.quick { systemctl("start", &c.name) } else { nmcli(&["connection", "up", "uuid", &c.uuid], 60) }
+}
+
+fn down(c: &Conn) -> Out {
+    if c.quick { systemctl("stop", &c.name) } else { nmcli(&["connection", "down", "uuid", &c.uuid], 30) }
 }
 
 fn report(out: &Out, what: &str) {
@@ -92,7 +119,7 @@ pub struct WireGuard {
 
 impl WireGuard {
     pub fn detect() -> Option<WireGuard> {
-        if !which("nmcli") {
+        if !which("nmcli") && !which("wg-quick") {
             return None;
         }
         let icon = |name: &str| icon_path(APP.id, name);
@@ -195,30 +222,23 @@ impl WireGuard {
 
     /// Połączenie: rozłączenie innych tuneli WireGuard i `nmcli connection up`.
     pub fn connect_job(&self, uuid: &str) -> Job {
-        let uuid = if uuid.is_empty() { self.conns.first().map(|c| c.uuid.clone()).unwrap_or_default() } else { uuid.to_string() };
-        let others: Vec<String> = self.conns.iter().filter(|c| c.uuid != uuid && (c.active() || c.busy())).map(|c| c.uuid.clone()).collect();
+        let target = self.conns.iter().find(|c| c.uuid == uuid || uuid.is_empty()).cloned();
+        let others: Vec<Conn> =
+            self.conns.iter().filter(|c| Some(&c.uuid) != target.as_ref().map(|t| &t.uuid) && (c.active() || c.busy())).cloned().collect();
         Box::new(move || {
-            if uuid.is_empty() {
-                return Err("No WireGuard connection - import a .conf file first.".into());
-            }
+            let Some(target) = target else { return Err("No WireGuard connection - import a .conf file first.".into()) };
             for other in &others {
-                nmcli(&["connection", "down", "uuid", other], 30);
+                down(other);
             }
-            let out = nmcli(&["connection", "up", "uuid", &uuid], 60);
+            let out = up(&target);
             if out.ok() { Ok(()) } else { Err(out.text()) }
         })
     }
 
     pub fn disconnect_job(&self) -> Job {
-        let uuids: Vec<String> = self.conns.iter().filter(|c| c.active() || c.busy()).map(|c| c.uuid.clone()).collect();
+        let active: Vec<Conn> = self.conns.iter().filter(|c| c.active() || c.busy()).cloned().collect();
         Box::new(move || {
-            let mut errors = Vec::new();
-            for uuid in &uuids {
-                let out = nmcli(&["connection", "down", "uuid", uuid], 30);
-                if !out.ok() {
-                    errors.push(out.text());
-                }
-            }
+            let errors: Vec<String> = active.iter().map(down).filter(|out| !out.ok()).map(|out| out.text()).collect();
             if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
         })
     }
@@ -288,26 +308,35 @@ impl WireGuard {
         conns.sort_by_key(|c| c.name.to_lowercase());
         let mut sub: Menu<Tray> = Vec::new();
         for c in conns {
-            let (uuid, name) = (c.uuid.clone(), c.name.clone());
             let endpoint = self.details(c).endpoint();
-            let (u1, u2, u3, n2, n3) = (uuid.clone(), uuid.clone(), uuid, name.clone(), name.clone());
-            let items = vec![
+            let (c1, c2, c3) = (c.clone(), c.clone(), c.clone());
+            let mut items = vec![
+                text(if c.quick { "wg-quick: hidden in Networks while off" } else { "NetworkManager connection" }),
                 check("Connect automatically", c.autoconnect, idle, move |_, v| {
-                    let uuid = u1.clone();
-                    bg(move || set_autoconnect(&uuid, v));
+                    let c = c1.clone();
+                    bg(move || set_autoconnect(&c, v));
                 }),
                 button("Copy server address", !endpoint.is_empty(), move |_| copy(&endpoint)),
                 sep(),
-                button("Rename…", idle, move |_| {
-                    let (uuid, name) = (u2.clone(), n2.clone());
-                    bg(move || rename(&uuid, &name));
-                }),
-                button("Remove…", idle, move |_| {
-                    let (uuid, name) = (u3.clone(), n3.clone());
-                    bg(move || remove(&uuid, &name));
-                }),
             ];
-            let label = if c.autoconnect { format!("{name}  (auto)") } else { name };
+            if !c.quick {
+                // Nazwa tunelu wg-quick = nazwa interfejsu i pliku; zmiana = usunięcie i ponowny import.
+                items.push(button("Rename…", idle, move |_| {
+                    let c = c2.clone();
+                    bg(move || rename(&c.uuid, &c.name));
+                }));
+            }
+            items.push(button("Remove…", idle, move |_| {
+                let c = c3.clone();
+                bg(move || remove(&c));
+            }));
+            let mut label = c.name.clone();
+            if c.autoconnect {
+                label.push_str("  (auto)");
+            }
+            if !c.quick {
+                label.push_str("  [NM]");
+            }
             sub.push(submenu(&label, true, items));
         }
         if !sub.is_empty() {
@@ -357,8 +386,12 @@ fn local_addresses(skip: &[String]) -> Vec<(String, Ipv4Addr)> {
     out
 }
 
-fn set_autoconnect(uuid: &str, enabled: bool) {
-    let out = nmcli(&["connection", "modify", "uuid", uuid, "connection.autoconnect", if enabled { "yes" } else { "no" }], 30);
+fn set_autoconnect(c: &Conn, enabled: bool) {
+    let out = if c.quick {
+        helper(&["autostart", &c.name, if enabled { "on" } else { "off" }])
+    } else {
+        nmcli(&["connection", "modify", "uuid", &c.uuid, "connection.autoconnect", if enabled { "yes" } else { "no" }], 30)
+    };
     report(&out, "Could not change the connection");
     refresh_now();
 }
@@ -372,13 +405,16 @@ fn rename(uuid: &str, name: &str) {
     refresh_now();
 }
 
-fn remove(uuid: &str, name: &str) {
+fn remove(c: &Conn) {
+    let name = &c.name;
+    let place = if c.quick { "/etc/wireguard" } else { "NetworkManager" };
     if !APP.yesno(&format!(
-        "Remove the WireGuard connection {name}?\n\nIts private key is deleted from NetworkManager - keep the .conf file if you want to import it again."
+        "Remove the WireGuard connection {name}?\n\nIts private key is deleted from {place} - keep the .conf file if you want to import it again."
     )) {
         return;
     }
-    report(&nmcli(&["connection", "delete", "uuid", uuid], 30), &format!("Could not remove {name}"));
+    let out = if c.quick { helper(&["remove", name]) } else { nmcli(&["connection", "delete", "uuid", &c.uuid], 30) };
+    report(&out, &format!("Could not remove {name}"));
     refresh_now();
 }
 
@@ -392,9 +428,8 @@ fn open_settings() {
     }
 }
 
-/// Import pliku wg-quick (.conf) do NetworkManagera. Nazwa połączenia i interfejsu = nazwa pliku,
-/// więc plik idzie przez kopię o wybranej nazwie w prywatnym katalogu. Nowe połączenie dostaje
-/// autoconnect=no - tunel ma się włączać tylko z menu.
+/// Import pliku .conf jako tunel wg-quick: /etc/wireguard/<nazwa>.conf przez wg-helper (pkexec).
+/// Bez autostartu - tunel włącza się tylko z menu.
 fn import() {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     let pick = run(&["kdialog", "--title", "Import WireGuard configuration", "--getopenfilename", &home, "*.conf|WireGuard configuration (*.conf)"], 600);
@@ -421,42 +456,23 @@ fn import() {
     if !valid_iface(&name) {
         return APP.error("Use 1-15 characters: letters, digits, '-' and '_'.");
     }
-    let existing = parse_connections(&nmcli(&["-t", "-f", "NAME,UUID,TYPE,AUTOCONNECT,DEVICE,STATE,FILENAME", "connection", "show"], 15).stdout);
-    if existing.iter().any(|c| c.name == name || c.device == name) {
-        return APP.error(&format!("A WireGuard connection named {name} already exists - pick another name or remove it first."));
+    let existing = gather().conns;
+    if existing.iter().any(|c| c.name == name || c.device == name) || Path::new("/sys/class/net").join(&name).exists() {
+        return APP.error(&format!("A connection or interface named {name} already exists - pick another name or remove it first."));
     }
-
-    let result = (|| -> std::io::Result<Out> {
-        let dir = runtime_dir(APP.id)?.join(format!("import-{}", std::process::id()));
-        fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
-        let file = dir.join(format!("{name}.conf"));
-        fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&file).and_then(|mut f| {
-            use std::io::Write;
-            f.write_all(content.as_bytes())
-        })?;
-        let out = nmcli(&["connection", "import", "type", "wireguard", "file", &file.to_string_lossy()], 30);
-        let _ = fs::remove_dir_all(&dir); // kopia z kluczem prywatnym nie zostaje na dysku
-        Ok(out)
-    })();
-    let out = match result {
-        Ok(out) => out,
-        Err(e) => return APP.error(&format!("Cannot prepare the import:\n{e}")),
-    };
-    if !out.ok() {
+    // Tunel wg-quick (niewidoczny w aplecie Sieci, gdy wyłączony); plik czyta wg-helper jako Ty.
+    let out = helper(&["import", &name, &path]);
+    if !out.ok_or_cancelled() {
         return report(&out, &format!("Could not import {path}"));
     }
-    let uuid = nmcli(&["-g", "connection.uuid", "connection", "show", "id", &name], 15).stdout.lines().next().unwrap_or("").trim().to_string();
-    if uuid.is_empty() {
-        refresh_now();
-        return APP.notify("WireGuard: imported", &name);
+    if !out.ok() {
+        return;
     }
-    // nmcli import zapisuje autoconnect=yes i od razu łączy - zostawiamy wybór użytkownikowi.
-    nmcli(&["connection", "modify", "uuid", &uuid, "connection.autoconnect", "no"], 30);
-    nmcli(&["connection", "down", "uuid", &uuid], 30);
     refresh_now();
     if APP.yesno(&format!("Imported {name}.\n\nConnect to it now?")) {
-        // Najpierw odświeżenie, żeby nowe połączenie (z trasami do pytania o LAN) było w stanie traya.
+        // Najpierw odświeżenie, żeby nowy tunel (z trasami do pytania o LAN) był w stanie traya.
         let g = gather();
+        let uuid = format!("wg-quick:{name}");
         update(move |t| {
             if let Some(wg) = t.wg.as_mut() {
                 (wg.conns, wg.details) = (g.conns, g.details);
@@ -475,15 +491,37 @@ struct Gathered {
 /// Odpytanie nmcli (każde wywołanie to osobny proces).
 fn gather() -> Gathered {
     let mut g = Gathered { conns: Vec::new(), details: HashMap::new(), error: String::new() };
-    let out = nmcli(&["-t", "-f", "NAME,UUID,TYPE,AUTOCONNECT,DEVICE,STATE,FILENAME", "connection", "show"], 8);
-    if !out.ok() {
-        g.error = "NetworkManager is not running".into();
-        return g;
+    // Tunele wg-quick: kopie bez kluczy + stan usług jednym wywołaniem systemctl na pytanie.
+    let mut names: Vec<String> = fs::read_dir(QUICK_DIR)
+        .map(|d| d.flatten().filter_map(|e| e.file_name().to_str()?.strip_suffix(".conf").map(String::from)).collect())
+        .unwrap_or_default();
+    names.sort();
+    if !names.is_empty() {
+        let units: Vec<String> = names.iter().map(|n| format!("wg-quick@{n}.service")).collect();
+        let ask = |verb: &str| {
+            let mut cmd = vec!["systemctl", verb];
+            cmd.extend(units.iter().map(String::as_str));
+            run(&cmd, 8).stdout.lines().map(String::from).collect::<Vec<_>>()
+        };
+        let (active, enabled) = (ask("is-active"), ask("is-enabled"));
+        for (i, name) in names.iter().enumerate() {
+            let c = quick_conn(name, active.get(i).map_or("", String::as_str), enabled.get(i).map_or("", String::as_str));
+            let text = fs::read_to_string(format!("{QUICK_DIR}/{name}.conf")).unwrap_or_default();
+            g.details.insert(c.uuid.clone(), parse_quick(&text));
+            g.conns.push(c);
+        }
     }
-    g.conns = parse_connections(&out.stdout);
-    for c in &g.conns {
-        let out = nmcli(&["-t", "-f", "wireguard.peers,ipv4.addresses,ipv4.dns", "connection", "show", "uuid", &c.uuid], 8);
-        g.details.insert(c.uuid.clone(), parse_details(&out.stdout));
+    if which("nmcli") {
+        let out = nmcli(&["-t", "-f", "NAME,UUID,TYPE,AUTOCONNECT,DEVICE,STATE,FILENAME", "connection", "show"], 8);
+        if !out.ok() {
+            g.error = "NetworkManager is not running".into();
+            return g;
+        }
+        for c in parse_connections(&out.stdout) {
+            let out = nmcli(&["-t", "-f", "wireguard.peers,ipv4.addresses,ipv4.dns", "connection", "show", "uuid", &c.uuid], 8);
+            g.details.insert(c.uuid.clone(), parse_details(&out.stdout));
+            g.conns.push(c);
+        }
     }
     g
 }
