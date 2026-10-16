@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=VPN Tray
+GenericName=VPN
+Comment=Tailscale, Twingate, NetBird and WireGuard in one tray icon
+Exec=/usr/local/lib/vpn-tray/vpn-tray
+Icon=vpn-tray
+Terminal=false
+Categories=Network;
+Keywords=vpn;tailscale;twingate;netbird;wireguard;tunnel;

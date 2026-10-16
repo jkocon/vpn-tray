@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+ <!-- VPN Tray: żaden VPN nie jest włączony (tarcza z węzłami jak w ikonie aplikacji, szara) -->
+ <path d="M12 1.6 L20.4 4.7 V11 C20.4 16.4 16.9 20.6 12 22.4 C7.1 20.6 3.6 16.4 3.6 11 V4.7 Z" fill="#40444c"/>
+ <path d="M8.2 14.6 L12 7.6 L15.8 14.6 Z" fill="none" stroke="#2d3037" stroke-width="1.1" stroke-linejoin="round"/>
+ <circle cx="12" cy="7.6" r="1.8" fill="#2d3037"/>
+ <circle cx="8.2" cy="14.6" r="1.8" fill="#2d3037"/>
+ <circle cx="15.8" cy="14.6" r="1.8" fill="#2d3037"/>
+</svg>

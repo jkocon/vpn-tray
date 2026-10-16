@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+ <!-- Twingate czeka na zalogowanie w przeglądarce -->
+ <path transform="translate(3 2)" fill-rule="evenodd" d="M0 8.516V17.2s1.298-.89 2.75-1.91v-4.774c0-2.347.707-3.104 2.62-4.526l2.624-1.95V0S4.198 2.816 2.62 3.99C.707 5.412 0 6.17 0 8.516ZM4 20v-8.684c0-2.347.707-3.104 2.62-4.526 1.578-1.174 5.374-3.99 5.374-3.99v7.577c0 .218.001.425.003.624.018 2.099.027 3.218-2.12 4.841C8.105 17.184 4 20 4 20Z" fill="#fcfcfc"/>
+ <circle cx="19" cy="19" r="5" fill="#f6a821"/>
+ <path d="M19,16.1 V19.4" fill="none" stroke="#10151c" stroke-width="1.8" stroke-linecap="round"/>
+ <circle cx="19" cy="21.6" r="1" fill="#10151c"/>
+</svg>

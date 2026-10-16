@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+ <!-- NetBird czeka na zalogowanie w przeglądarce -->
+ <g transform="translate(0 1.2) scale(0.6)">
+  <path d="M21.4631 0.523438C17.8173 0.857913 16.0028 2.95675 15.3171 4.01871L4.66406 22.4734H17.5163L30.1929 0.523438H21.4631Z" fill="#fcfcfc"/>
+  <path d="M17.5265 22.4737L0 3.88525C0 3.88525 19.8177 -1.44128 21.7493 15.1738L17.5265 22.4737Z" fill="#fcfcfc"/>
+  <path d="M14.9236 4.70563L9.54688 14.0208L17.5158 22.4747L21.7385 15.158C21.0696 9.44682 18.2851 6.32784 14.9236 4.69727Z" fill="#b9c2d6"/>
+ </g>
+ <circle cx="19" cy="19" r="5" fill="#f6a821"/>
+ <path d="M19,16.1 V19.4" fill="none" stroke="#10151c" stroke-width="1.8" stroke-linecap="round"/>
+ <circle cx="19" cy="21.6" r="1" fill="#10151c"/>
+</svg>

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VPN Tray
+Comment=Tailscale, Twingate, NetBird and WireGuard in one tray icon
+Exec=/usr/local/lib/vpn-tray/vpn-tray
+Icon=vpn-tray
+Terminal=false
+NoDisplay=true
+X-KDE-autostart-phase=2
